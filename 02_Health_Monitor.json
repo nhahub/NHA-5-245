@@ -1,0 +1,493 @@
+{
+  "name": "SLA Guard 02 - Health Monitor",
+  "nodes": [
+    {
+      "id": "5e7cc876-53df-5a0c-9277-e4f0da50d64c",
+      "name": "Every Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "776db349-63e3-5955-9ef9-03789d28be8e",
+      "name": "Called by David Gateway",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        220
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "dataset",
+              "type": "string"
+            },
+            {
+              "name": "trace_id",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "e6866e2e-0d2c-5589-8bdb-8b64b6ff5e37",
+      "name": "Health Monitor Settings and Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Set the project URL here. Select the database Header Auth credential on each HTTP node.\nconst SUPABASE_PROJECT_URL = 'https://YOUR_PROJECT_REF.supabase.co';\nconst { dataset, trace_id } = $input.first().json;\nconst fail = (code, error) => [{ json: { ok: false, code, error } }];\nif (dataset !== 'live' || typeof trace_id !== 'string' || !trace_id.trim() || trace_id.length > 200) {\n  return fail('INVALID_REQUEST', 'Use the live dataset and a non-empty trace_id of at most 200 characters.');\n}\nconst supabase_url = SUPABASE_PROJECT_URL.replace(/\\/+$/, '');\nif (!/^https?:\\/\\/[a-z0-9.-]+(?::\\d{1,5})?$/i.test(supabase_url) || supabase_url.includes('YOUR_PROJECT_REF')) {\n  return fail('DEPENDENCY_ERROR', 'The Supabase project URL is unconfigured.');\n}\nreturn [{ json: { valid: true, trace_id, execution_id: String($execution.id), supabase_url } }];"
+      }
+    },
+    {
+      "id": "e44908eb-ecef-58dc-93ac-e6c04971127e",
+      "name": "Input Accepted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a1eb8dcc-269b-467b-a93d-443dd14bc752",
+              "leftValue": "={{ $json.valid === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "93093af4-10da-587d-ace3-47ab42536e2d",
+      "name": "Return Invalid Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        280
+      ],
+      "parameters": {
+        "jsCode": "return $input.all();"
+      }
+    },
+    {
+      "id": "6b83fba1-d255-5c89-8048-8fc2eabec2d2",
+      "name": "Load Website Service",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        40
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.supabase_url + '/rest/v1/sg_services' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "eq.website"
+            },
+            {
+              "name": "select",
+              "value": "id,target_url,expected_status,timeout_ms,enabled"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "0f02216e-d2b8-5e3e-adfd-f0ad348a847e",
+      "name": "Validate Service and Start Clock",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1060,
+        40
+      ],
+      "parameters": {
+        "jsCode": "const config = $('Health Monitor Settings and Validation').first().json;\nconst { body } = $input.first().json;\nconst service = Array.isArray(body) && body.length === 1 ? body[0] : null;\nif (service?.id !== 'website' || service.enabled !== true || typeof service.target_url !== 'string'\n    || !/^https?:\\/\\//i.test(service.target_url)\n    || !Number.isInteger(service.expected_status) || service.expected_status < 100 || service.expected_status > 599\n    || !Number.isInteger(service.timeout_ms) || service.timeout_ms < 1) {\n  return [{ json: { dependency_error: true, error: 'Site website is missing, disabled, or invalid in sg_services.' } }];\n}\nconst request_started_ms = Date.now();\nreturn [{ json: { ...config, ...service, request_started_ms, checked_at: new Date(request_started_ms).toISOString() } }];"
+      }
+    },
+    {
+      "id": "15bde8b7-d4fa-5f06-9354-666c77718ab1",
+      "name": "Service Configuration Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        40
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0cf768bc-7fc9-418c-9f33-c7002aebc45f",
+              "leftValue": "={{ !$json.dependency_error }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "7352c737-f862-5b61-a897-068404ad65a9",
+      "name": "Return Configuration Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1580,
+        240
+      ],
+      "parameters": {
+        "jsCode": "const x=$input.first().json; return [{json:{ok:false,code:'DEPENDENCY_ERROR',error:x.error}}];"
+      }
+    },
+    {
+      "id": "1995d4bf-ddde-5b0f-bf6b-3612ad907b99",
+      "name": "Probe Configured Health Endpoint",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1580,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.target_url }}",
+        "options": {
+          "timeout": "={{ $json.timeout_ms }}",
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "b5f02c09-832e-5d31-97c0-4b29f07ebc9f",
+      "name": "Normalize Live Observation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\nconst service = $('Validate Service and Start Clock').first().json;\nconst transportError = raw.error;\nconst status = raw.statusCode;\nconst statusCode = !transportError && Number.isInteger(status) && status >= 100 && status <= 599 ? status : null;\nconst isUp = statusCode === service.expected_status;\nlet error = null;\nif (transportError) {\n  error = typeof transportError === 'string' ? transportError : (transportError.message || 'Health request failed');\n} else if (!isUp) {\n  error = statusCode === null ? 'No HTTP status returned' : 'Expected HTTP ' + service.expected_status + '; received ' + statusCode;\n}\nreturn [{ json: {\n  p_service_id: 'website', p_execution_id: service.execution_id, p_checked_at: service.checked_at,\n  p_is_up: isUp, p_status_code: statusCode, p_response_ms: Math.max(0, Date.now() - service.request_started_ms),\n  p_error: error === null ? null : String(error).slice(0, 500), supabase_url: service.supabase_url,\n} }];"
+      }
+    },
+    {
+      "id": "b8ff8b16-426f-5472-a5e8-7311d309fe77",
+      "name": "Record Check Once per Execution",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2100,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.supabase_url + '/rest/v1/rpc/sg_record_check' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {p_service_id:$json.p_service_id,p_execution_id:$json.p_execution_id,p_checked_at:$json.p_checked_at,p_is_up:$json.p_is_up,p_status_code:$json.p_status_code,p_response_ms:$json.p_response_ms,p_error:$json.p_error} }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "e441cadd-911b-5723-8fd9-e5dc6ebfdd45",
+      "name": "Return Stored Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2360,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const { body } = $input.first().json;\nconst expected = $('Normalize Live Observation').first().json;\nif (body?.check?.service_id !== 'website' || body.check.source !== 'live' || body.check.execution_id !== expected.p_execution_id\n    || typeof body.transition !== 'string' || typeof body.duplicate !== 'boolean') {\n  return [{ json: { ok: false, code: 'DEPENDENCY_ERROR', error: 'Supabase returned an invalid stored check.' } }];\n}\nconst { check, transition, duplicate } = body;\nreturn [{ json: { ok: true, result: { check, transition, duplicate } } }];"
+      }
+    },
+    {
+      "id": "d607b6c9-1c14-59c4-be7e-259958838095",
+      "name": "Return Database Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2360,
+        240
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { ok: false, code: 'DEPENDENCY_ERROR', error: 'Could not read or save the health check in Supabase.' } }];"
+      }
+    },
+    {
+      "id": "cb6bab36-7334-5d53-b0dd-54d9cb4e340a",
+      "name": "Set Scheduled Trace",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        250,
+        -130
+      ],
+      "parameters": {
+        "jsCode": "return [{json:{dataset:'live',trace_id:String($execution.id)}}];"
+      }
+    }
+  ],
+  "connections": {
+    "Every Minute": {
+      "main": [
+        [
+          {
+            "node": "Set Scheduled Trace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Called by David Gateway": {
+      "main": [
+        [
+          {
+            "node": "Health Monitor Settings and Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Health Monitor Settings and Validation": {
+      "main": [
+        [
+          {
+            "node": "Input Accepted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Accepted?": {
+      "main": [
+        [
+          {
+            "node": "Load Website Service",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Invalid Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Website Service": {
+      "main": [
+        [
+          {
+            "node": "Validate Service and Start Clock",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Database Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Service and Start Clock": {
+      "main": [
+        [
+          {
+            "node": "Service Configuration Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Service Configuration Valid?": {
+      "main": [
+        [
+          {
+            "node": "Probe Configured Health Endpoint",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Configuration Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probe Configured Health Endpoint": {
+      "main": [
+        [
+          {
+            "node": "Normalize Live Observation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Live Observation": {
+      "main": [
+        [
+          {
+            "node": "Record Check Once per Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Check Once per Execution": {
+      "main": [
+        [
+          {
+            "node": "Return Stored Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Database Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Scheduled Trace": {
+      "main": [
+        [
+          {
+            "node": "Health Monitor Settings and Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC",
+    "executionTimeout": 120,
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "pinData": {},
+  "versionId": "b2e2d518-5ec9-489c-aa77-d84930ef3655",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

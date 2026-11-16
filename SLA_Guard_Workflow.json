@@ -1,0 +1,674 @@
+{
+  "name": "SLA Guard - Website Uptime and Claim Drafts",
+  "nodes": [
+    {
+      "id": "fd5b4aaf-7bf2-5e5d-a415-6b9e96f46ba4",
+      "name": "Every Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "177c9d58-6416-57d7-851b-6a3c5dcbefa2",
+      "name": "Manual Check",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        140
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "005d2248-dbae-5aa0-9722-02835a011654",
+      "name": "Prepare Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { action: 'check' } }];"
+      }
+    },
+    {
+      "id": "20e06ff6-9b06-5dc9-8b8e-a8051bfd2065",
+      "name": "Monthly at 00-05 UTC",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        340
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 5 0 1 * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "446485fc-16a9-51d0-8da7-ba4fca401e7f",
+      "name": "Prepare Monthly Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        340
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { action: 'report', dataset: 'live' } }];"
+      }
+    },
+    {
+      "id": "0cec457c-105d-5c51-82ef-61678c37531c",
+      "name": "Authenticated Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        220,
+        620
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sla-guard",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "288a65af-c250-51c1-a06e-57c1d164f364",
+      "notes": "Select a separate Header Auth credential: X-SLA-Key = a long random secret. Production URL: /webhook/sla-guard. Never use the Supabase key as this secret.",
+      "notesInFlow": true
+    },
+    {
+      "id": "82ef830b-e983-54a7-814e-e54c46b3b133",
+      "name": "Settings and Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        280
+      ],
+      "parameters": {
+        "jsCode": "// EDIT THESE TWO VALUES. Secrets belong in n8n credentials, never here.\nconst SETTINGS = {\n  supabaseUrl: 'https://YOUR_PROJECT_REF.supabase.co',\n  serviceId: 'website',\n};\nconst input = $input.first().json;\nconst fromWebhook = Object.prototype.hasOwnProperty.call(input, 'headers')\n  && Object.prototype.hasOwnProperty.call(input, 'body');\nconst request = fromWebhook ? input.body : input;\nconst now = new Date();\nconst previousMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);\nconst currentMonth = now.toISOString().slice(0, 7);\nlet validationError = null;\nconst objectBody = request && typeof request === 'object' && !Array.isArray(request);\nconst body = objectBody ? request : {};\nif (!objectBody) validationError = 'Send a JSON object with Content-Type: application/json.';\nif (fromWebhook && Object.keys(body).some(k => !['action', 'month', 'dataset'].includes(k))) {\n  validationError = 'Allowed fields: action, month, dataset.';\n}\nconst action = body.action ?? (fromWebhook ? 'status' : 'check');\nconst dataset = body.dataset ?? 'live';\nconst month = body.month ?? previousMonth;\nif (!['check', 'status', 'report'].includes(action)) validationError = 'action must be check, status, or report.';\nif (!['live', 'demo'].includes(dataset)) validationError = 'dataset must be live or demo.';\nif (action === 'check' && dataset !== 'live') validationError = 'check always records live evidence; demo is for status/report only.';\nif (action !== 'report' && body.month !== undefined) validationError = 'month is only valid for the report action.';\nif (action === 'report' && (typeof month !== 'string' || !/^\\d{4}-(0[1-9]|1[0-2])$/.test(month) || month < '1970-01' || month > currentMonth)) {\n  validationError = 'month must be YYYY-MM between 1970-01 and the current UTC month.';\n}\nconst supabaseUrl = SETTINGS.supabaseUrl.replace(/\\/+$/, '');\nif (!/^https:\\/\\/[^/\\s]+$/.test(supabaseUrl) || supabaseUrl.includes('YOUR_PROJECT_REF')) {\n  throw new Error('Set your Supabase Project URL in Settings and Request before running.');\n}\nreturn [{ json: {\n  supabase_url: supabaseUrl, service_id: SETTINGS.serviceId,\n  action, dataset, month: action === 'report' ? month + '-01' : null,\n  from_webhook: fromWebhook, execution_id: String($execution.id),\n  validation_error: validationError,\n} }];"
+      },
+      "notes": "Only configuration in this workflow: Supabase Project URL and service ID. Contract, target URL, timeout and fee live in sg_services.",
+      "notesInFlow": true
+    },
+    {
+      "id": "3f3cc628-a9f1-5872-a4b7-29babc5a17bd",
+      "name": "Route Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        760,
+        280
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 4,
+        "output": "={{ $json.validation_error ? 3 : ({ check: 0, status: 1, report: 2 })[$json.action] }}"
+      },
+      "notes": "Outputs: 0 check; 1 status; 2 report; 3 invalid request.",
+      "notesInFlow": true
+    },
+    {
+      "id": "db03aabe-d50c-5c16-b4e7-8c7ce96b67d1",
+      "name": "Load Service",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1020,
+        0
+      ],
+      "parameters": {
+        "url": "={{ $('Settings and Request').first().json.supabase_url + '/rest/v1/sg_services' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "={{ 'eq.' + $('Settings and Request').first().json.service_id }}"
+            },
+            {
+              "name": "select",
+              "value": "*"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "notes": "Select SLA Guard - Supabase Header Auth (apikey). Empty results deliberately reach Start Probe, which explains the missing configuration."
+    },
+    {
+      "id": "45c38266-2794-5c15-9200-e32a8c73c453",
+      "name": "Start Probe",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const s = $input.first().json;\nif (!s.id || !s.target_url) throw new Error('Service row missing. Run schema.sql and check serviceId.');\nif (!s.enabled) throw new Error('Service is disabled in sg_services.');\nif (!/^https?:\\/\\//.test(s.target_url)) throw new Error('target_url must use http:// or https://.');\nreturn [{ json: { ...s, started_at: new Date().toISOString() } }];"
+      }
+    },
+    {
+      "id": "a40b3754-5d14-52fe-8775-855016f1bd5b",
+      "name": "Probe Website",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.target_url }}",
+        "options": {
+          "timeout": "={{ $json.timeout_ms }}",
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": false,
+      "notes": "Only this node continues on error: HTTP failures, DNS failures and timeouts become down samples. No retries; redirects are not followed. Use a small unauthenticated /health response.",
+      "notesInFlow": true
+    },
+    {
+      "id": "5f92fc24-1125-594c-9b10-aaf19d0a51e8",
+      "name": "Normalize Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\nconst service = $('Start Probe').first().json;\nconst settings = $('Settings and Request').first().json;\nconst status = Number(raw.statusCode);\nconst statusCode = Number.isInteger(status) && status >= 100 && status <= 599 ? status : null;\nconst transportError = raw.error;\nconst isUp = !transportError && statusCode === Number(service.expected_status);\nlet error = null;\nif (transportError) {\n  error = typeof transportError === 'string' ? transportError\n    : (transportError.message || JSON.stringify(transportError));\n} else if (!isUp) {\n  error = statusCode === null ? 'No HTTP status returned' : `Expected HTTP ${service.expected_status}; received ${statusCode}`;\n}\nreturn [{ json: {\n  p_service_id: settings.service_id, p_execution_id: settings.execution_id,\n  p_checked_at: service.started_at, p_is_up: Boolean(isUp),\n  p_status_code: statusCode,\n  p_response_ms: Math.max(0, Date.now() - Date.parse(service.started_at)),\n  p_error: error === null ? null : String(error).slice(0, 500),\n} }];"
+      }
+    },
+    {
+      "id": "aa4401c4-5bda-5997-81ac-3be027f0d1ef",
+      "name": "Save Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1900,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings and Request').first().json.supabase_url + '/rest/v1/rpc/sg_record_check' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "notes": "Select the SLA Guard - Supabase Header Auth credential (header: apikey). Database failures stop the execution; they never become website outages.",
+      "notesInFlow": false
+    },
+    {
+      "id": "853b09b1-2af7-5b1a-aea9-0de56e435a91",
+      "name": "Get Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1240,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings and Request').first().json.supabase_url + '/rest/v1/rpc/sg_status' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { p_service_id: $('Settings and Request').first().json.service_id, p_source: $('Settings and Request').first().json.dataset } }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "notes": "Select the SLA Guard - Supabase Header Auth credential (header: apikey). Database failures stop the execution; they never become website outages.",
+      "notesInFlow": false
+    },
+    {
+      "id": "a87454c7-fefe-59de-8e79-6896db082e88",
+      "name": "Build Monthly Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1240,
+        540
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings and Request').first().json.supabase_url + '/rest/v1/rpc/sg_monthly_report' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { p_service_id: $('Settings and Request').first().json.service_id, p_month: $('Settings and Request').first().json.month, p_source: $('Settings and Request').first().json.dataset, p_execution_id: $('Settings and Request').first().json.execution_id } }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "notes": "Select the SLA Guard - Supabase Header Auth credential (header: apikey). Database failures stop the execution; they never become website outages.",
+      "notesInFlow": false
+    },
+    {
+      "id": "4ca12c41-ae1a-59d4-9804-6455f8958cde",
+      "name": "Response Envelope",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        280
+      ],
+      "parameters": {
+        "jsCode": "const settings = $('Settings and Request').first().json;\nconst failed = Boolean(settings.validation_error);\nconst body = {\n  ok: !failed, action: settings.action, execution_id: settings.execution_id,\n  ...(failed ? { error: settings.validation_error } : { result: $input.first().json }),\n};\nreturn [{ json: { from_webhook: settings.from_webhook, http_status: failed ? 400 : 200, body } }];"
+      }
+    },
+    {
+      "id": "6b950135-a702-5c06-bf16-0a54ae409b7d",
+      "name": "Webhook or Scheduled",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2400,
+        280
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.from_webhook ? 0 : 1 }}"
+      }
+    },
+    {
+      "id": "b2ee7515-3009-5a5c-a018-1cda83994832",
+      "name": "Return JSON",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2640,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.http_status }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "ea82a244-832b-5f84-991f-e87559ca7c97",
+      "name": "Scheduled Result",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2640,
+        400
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "b3a9eca2-9abf-5576-ac15-9e7d5f8197b2",
+      "name": "Setup Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -30,
+        -300
+      ],
+      "parameters": {
+        "content": "## SLA Guard | Website availability\n1. Run supabase/schema.sql.\n2. Edit Settings and Request (Project URL).\n3. Select Supabase Header Auth on all 4 database HTTP nodes.\n4. Select a SEPARATE Header Auth on Authenticated Webhook.\n5. Execute Manual Check, then publish.\nSee README.md for Docker, Cloudflare and demo instructions.",
+        "height": 270,
+        "width": 640,
+        "color": 5
+      }
+    },
+    {
+      "id": "b8167afd-9d62-507d-bf6f-ec05c0ed1082",
+      "name": "Trace Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1020,
+        -300
+      ],
+      "parameters": {
+        "content": "## Check evidence\nEvery minute or authenticated POST {\"action\":\"check\"}.\nExact expected status = up. Other statuses/transport errors = down.\nSave Check is idempotent per execution ID.\nDatabase errors fail visibly and leave a monitoring gap.\nContract / endpoint / timeout: Supabase sg_services.",
+        "height": 250,
+        "width": 840,
+        "color": 4
+      }
+    },
+    {
+      "id": "faae1d90-4112-52e3-b2b2-36a0ab9bd09c",
+      "name": "Report Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        760
+      ],
+      "parameters": {
+        "content": "## Reports and API\nPOST /webhook/sla-guard with X-SLA-Key and JSON.\n{\"action\":\"status\"}\n{\"action\":\"report\",\"month\":\"YYYY-MM\",\"dataset\":\"live\"}\nOmit month for previous UTC month; demo uses separate evidence.\nReports + claim text are stored in sg_reports. Human review required.\nUnknown intervals block credit calculation. No automatic claim submission.",
+        "height": 260,
+        "width": 900,
+        "color": 6
+      }
+    }
+  ],
+  "connections": {
+    "Every Minute": {
+      "main": [
+        [
+          {
+            "node": "Prepare Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Check": {
+      "main": [
+        [
+          {
+            "node": "Prepare Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Monthly at 00-05 UTC": {
+      "main": [
+        [
+          {
+            "node": "Prepare Monthly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Check": {
+      "main": [
+        [
+          {
+            "node": "Settings and Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Monthly Report": {
+      "main": [
+        [
+          {
+            "node": "Settings and Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticated Webhook": {
+      "main": [
+        [
+          {
+            "node": "Settings and Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings and Request": {
+      "main": [
+        [
+          {
+            "node": "Route Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Service": {
+      "main": [
+        [
+          {
+            "node": "Start Probe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Probe": {
+      "main": [
+        [
+          {
+            "node": "Probe Website",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probe Website": {
+      "main": [
+        [
+          {
+            "node": "Normalize Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Check": {
+      "main": [
+        [
+          {
+            "node": "Save Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Check": {
+      "main": [
+        [
+          {
+            "node": "Response Envelope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Status": {
+      "main": [
+        [
+          {
+            "node": "Response Envelope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Monthly Report": {
+      "main": [
+        [
+          {
+            "node": "Response Envelope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Response Envelope": {
+      "main": [
+        [
+          {
+            "node": "Webhook or Scheduled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Action": {
+      "main": [
+        [
+          {
+            "node": "Load Service",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Monthly Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Response Envelope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook or Scheduled": {
+      "main": [
+        [
+          {
+            "node": "Return JSON",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Scheduled Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC",
+    "executionTimeout": 120,
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "versionId": "953a3897-7ff6-53b8-a639-e17194bb50ec",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

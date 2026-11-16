@@ -1,0 +1,397 @@
+[
+  {
+    "v": 11,
+    "name": "SLA Guard",
+    "description": "Local requests for testing SLA Guard. Create and select a personal environment with the secret variables SLA_WEBHOOK_KEY and DEMO_CONTROL_TOKEN from the project .env. Start with Get live status. Set the collection variable REPORT_MONTH to the billing month you want to test.",
+    "folders": [
+      {
+        "v": 11,
+        "name": "Webhook",
+        "description": "All requests use the X-SLA-Key header.",
+        "folders": [],
+        "requests": [
+          {
+            "v": "17",
+            "name": "Get live status",
+            "description": "Read the current status and recent live checks. Expect HTTP 200.",
+            "method": "POST",
+            "endpoint": "<<SLA_N8N_URL>>/webhook/sla-guard",
+            "params": [],
+            "headers": [],
+            "auth": {
+              "authType": "inherit",
+              "authActive": true
+            },
+            "preRequestScript": "",
+            "testScript": "",
+            "body": {
+              "contentType": "application/json",
+              "body": "{\n  \"action\": \"status\",\n  \"dataset\": \"live\"\n}"
+            },
+            "requestVariables": [],
+            "responses": {},
+            "_ref_id": "req_2f41f05d-7cc1-4717-80bb-a2781b8c0637"
+          },
+          {
+            "v": "17",
+            "name": "Get demo status",
+            "description": "Read synthetic check history. Stale demo samples produce unknown status.",
+            "method": "POST",
+            "endpoint": "<<SLA_N8N_URL>>/webhook/sla-guard",
+            "params": [],
+            "headers": [],
+            "auth": {
+              "authType": "inherit",
+              "authActive": true
+            },
+            "preRequestScript": "",
+            "testScript": "",
+            "body": {
+              "contentType": "application/json",
+              "body": "{\n  \"action\": \"status\",\n  \"dataset\": \"demo\"\n}"
+            },
+            "requestVariables": [],
+            "responses": {},
+            "_ref_id": "req_56bf0df4-f5ff-4685-824d-26efd36b2b92"
+          },
+          {
+            "v": "17",
+            "name": "Record a live check",
+            "description": "Probe the configured site and store a check. HTTP 200 means the check was saved. Inspect result.check.is_up for site health.",
+            "method": "POST",
+            "endpoint": "<<SLA_N8N_URL>>/webhook/sla-guard",
+            "params": [],
+            "headers": [],
+            "auth": {
+              "authType": "inherit",
+              "authActive": true
+            },
+            "preRequestScript": "",
+            "testScript": "",
+            "body": {
+              "contentType": "application/json",
+              "body": "{\n  \"action\": \"check\"\n}"
+            },
+            "requestVariables": [],
+            "responses": {},
+            "_ref_id": "req_fff0a458-f219-4458-8000-bb434a219def"
+          },
+          {
+            "v": "17",
+            "name": "Generate live report",
+            "description": "Create or revise the live report for REPORT_MONTH.",
+            "method": "POST",
+            "endpoint": "<<SLA_N8N_URL>>/webhook/sla-guard",
+            "params": [],
+            "headers": [],
+            "auth": {
+              "authType": "inherit",
+              "authActive": true
+            },
+            "preRequestScript": "",
+            "testScript": "",
+            "body": {
+              "contentType": "application/json",
+              "body": "{\n  \"action\": \"report\",\n  \"dataset\": \"live\",\n  \"month\": \"<<REPORT_MONTH>>\"\n}"
+            },
+            "requestVariables": [],
+            "responses": {},
+            "_ref_id": "req_511ad372-7b9c-44ad-8388-1cfa7eb9c157"
+          },
+          {
+            "v": "17",
+            "name": "Get saved live report",
+            "description": "Read the saved live report. Generate it first if you receive REPORT_NOT_FOUND.",
+            "method": "POST",
+            "endpoint": "<<SLA_N8N_URL>>/webhook/sla-guard",
+            "params": [],
+            "headers": [],
+            "auth": {
+              "authType": "inherit",
+              "authActive": true
+            },
+            "preRequestScript": "",
+            "testScript": "",
+            "body": {
+              "contentType": "application/json",
+              "body": "{\n  \"action\": \"get_report\",\n  \"dataset\": \"live\",\n  \"month\": \"<<REPORT_MONTH>>\"\n}"
+            },
+            "requestVariables": [],
+            "responses": {},
+            "_ref_id": "req_ba8740a5-1239-425b-96ef-42e7ca37aa05"
+          },
+          {
+            "v": "17",
+            "name": "Generate demo report",
+            "description": "Create or revise a report using seeded synthetic evidence. October 2026 is seeded on the current deployment.",
+            "method": "POST",
+            "endpoint": "<<SLA_N8N_URL>>/webhook/sla-guard",
+            "params": [],
+            "headers": [],
+            "auth": {
+              "authType": "inherit",
+              "authActive": true
+            },
+            "preRequestScript": "",
+            "testScript": "",
+            "body": {
+              "contentType": "application/json",
+              "body": "{\n  \"action\": \"report\",\n  \"dataset\": \"demo\",\n  \"month\": \"<<REPORT_MONTH>>\"\n}"
+            },
+            "requestVariables": [],
+            "responses": {},
+            "_ref_id": "req_b7a61999-3f13-4b71-abef-05fbcebdbee9"
+          },
+          {
+            "v": "17",
+            "name": "Get saved demo report",
+            "description": "Read the saved demo report and its claim draft. Compare report_id and revision with the generation response.",
+            "method": "POST",
+            "endpoint": "<<SLA_N8N_URL>>/webhook/sla-guard",
+            "params": [],
+            "headers": [],
+            "auth": {
+              "authType": "inherit",
+              "authActive": true
+            },
+            "preRequestScript": "",
+            "testScript": "",
+            "body": {
+              "contentType": "application/json",
+              "body": "{\n  \"action\": \"get_report\",\n  \"dataset\": \"demo\",\n  \"month\": \"<<REPORT_MONTH>>\"\n}"
+            },
+            "requestVariables": [],
+            "responses": {},
+            "_ref_id": "req_887dbe31-b37c-4773-84f7-415810acc7d1"
+          }
+        ],
+        "auth": {
+          "authType": "api-key",
+          "authActive": true,
+          "key": "X-SLA-Key",
+          "value": "<<SLA_WEBHOOK_KEY>>",
+          "addTo": "HEADERS"
+        },
+        "headers": [],
+        "variables": [],
+        "_ref_id": "coll_850facb9-c6ef-4772-901c-3b24aa1ee0e3"
+      },
+      {
+        "v": 11,
+        "name": "Demo site",
+        "description": "Use the outage controls with Record a live check in the Webhook folder to record a failure and recovery while SLA Guard monitors the demo site.",
+        "folders": [],
+        "requests": [
+          {
+            "v": "17",
+            "name": "Open endpoint directory",
+            "description": "Read the HTML endpoint directory. Expect HTTP 200.",
+            "method": "GET",
+            "endpoint": "<<SLA_DEMO_URL>>/",
+            "params": [],
+            "headers": [],
+            "auth": {
+              "authType": "inherit",
+              "authActive": true
+            },
+            "preRequestScript": "",
+            "testScript": "",
+            "body": {
+              "contentType": null,
+              "body": null
+            },
+            "requestVariables": [],
+            "responses": {},
+            "_ref_id": "req_ffa0d335-7677-4089-a2dc-6968ff461721"
+          },
+          {
+            "v": "17",
+            "name": "Get demo health",
+            "description": "Expect HTTP 200 when the site is up and 503 during a simulated outage.",
+            "method": "GET",
+            "endpoint": "<<SLA_DEMO_URL>>/health",
+            "params": [],
+            "headers": [],
+            "auth": {
+              "authType": "inherit",
+              "authActive": true
+            },
+            "preRequestScript": "",
+            "testScript": "",
+            "body": {
+              "contentType": null,
+              "body": null
+            },
+            "requestVariables": [],
+            "responses": {},
+            "_ref_id": "req_dcf11975-dbeb-451f-bde6-52c0c1ed5069"
+          },
+          {
+            "v": "17",
+            "name": "Simulate demo outage",
+            "description": "Make /health return HTTP 503.",
+            "method": "POST",
+            "endpoint": "<<SLA_DEMO_URL>>/admin/down",
+            "params": [],
+            "headers": [],
+            "auth": {
+              "authType": "bearer",
+              "authActive": true,
+              "token": "<<DEMO_CONTROL_TOKEN>>"
+            },
+            "preRequestScript": "",
+            "testScript": "",
+            "body": {
+              "contentType": null,
+              "body": null
+            },
+            "requestVariables": [],
+            "responses": {},
+            "_ref_id": "req_f276d6d5-7d07-4630-b5ee-51cddc893e0e"
+          },
+          {
+            "v": "17",
+            "name": "Restore demo site",
+            "description": "Make /health return HTTP 200 again.",
+            "method": "POST",
+            "endpoint": "<<SLA_DEMO_URL>>/admin/up",
+            "params": [],
+            "headers": [],
+            "auth": {
+              "authType": "bearer",
+              "authActive": true,
+              "token": "<<DEMO_CONTROL_TOKEN>>"
+            },
+            "preRequestScript": "",
+            "testScript": "",
+            "body": {
+              "contentType": null,
+              "body": null
+            },
+            "requestVariables": [],
+            "responses": {},
+            "_ref_id": "req_b72c2c7f-eab7-49e5-84e3-97a65e392082"
+          }
+        ],
+        "auth": {
+          "authType": "none",
+          "authActive": true
+        },
+        "headers": [],
+        "variables": [],
+        "_ref_id": "coll_9db9c9e9-c7e8-4fbf-8bc9-261df147fdb6"
+      },
+      {
+        "v": 11,
+        "name": "Validation",
+        "description": "Requests with expected error responses.",
+        "folders": [],
+        "requests": [
+          {
+            "v": "17",
+            "name": "Missing webhook key",
+            "description": "Expect HTTP 401 or 403.",
+            "method": "POST",
+            "endpoint": "<<SLA_N8N_URL>>/webhook/sla-guard",
+            "params": [],
+            "headers": [],
+            "auth": {
+              "authType": "none",
+              "authActive": true
+            },
+            "preRequestScript": "",
+            "testScript": "",
+            "body": {
+              "contentType": "application/json",
+              "body": "{\n  \"action\": \"status\"\n}"
+            },
+            "requestVariables": [],
+            "responses": {},
+            "_ref_id": "req_d98e5c58-0072-408b-970f-435b20196960"
+          },
+          {
+            "v": "17",
+            "name": "Invalid action (400)",
+            "description": "Expect INVALID_REQUEST.",
+            "method": "POST",
+            "endpoint": "<<SLA_N8N_URL>>/webhook/sla-guard",
+            "params": [],
+            "headers": [],
+            "auth": {
+              "authType": "inherit",
+              "authActive": true
+            },
+            "preRequestScript": "",
+            "testScript": "",
+            "body": {
+              "contentType": "application/json",
+              "body": "{\n  \"action\": \"unsupported\"\n}"
+            },
+            "requestVariables": [],
+            "responses": {},
+            "_ref_id": "req_1865c232-7598-4fd0-be18-65c668ad3518"
+          },
+          {
+            "v": "17",
+            "name": "Missing saved report (404)",
+            "description": "Expect REPORT_NOT_FOUND for this unseeded demo month.",
+            "method": "POST",
+            "endpoint": "<<SLA_N8N_URL>>/webhook/sla-guard",
+            "params": [],
+            "headers": [],
+            "auth": {
+              "authType": "inherit",
+              "authActive": true
+            },
+            "preRequestScript": "",
+            "testScript": "",
+            "body": {
+              "contentType": "application/json",
+              "body": "{\n  \"action\": \"get_report\",\n  \"dataset\": \"demo\",\n  \"month\": \"1970-01\"\n}"
+            },
+            "requestVariables": [],
+            "responses": {},
+            "_ref_id": "req_c88fa23f-2ac6-4ca7-a495-8959b1fc632a"
+          }
+        ],
+        "auth": {
+          "authType": "api-key",
+          "authActive": true,
+          "key": "X-SLA-Key",
+          "value": "<<SLA_WEBHOOK_KEY>>",
+          "addTo": "HEADERS"
+        },
+        "headers": [],
+        "variables": [],
+        "_ref_id": "coll_bbd745b1-94b7-4fcf-8286-b3c154b590a5"
+      }
+    ],
+    "requests": [],
+    "auth": {
+      "authType": "none",
+      "authActive": true
+    },
+    "headers": [],
+    "variables": [
+      {
+        "key": "SLA_N8N_URL",
+        "initialValue": "http://localhost:8080",
+        "currentValue": "http://localhost:8080",
+        "secret": false
+      },
+      {
+        "key": "SLA_DEMO_URL",
+        "initialValue": "http://localhost:8082",
+        "currentValue": "http://localhost:8082",
+        "secret": false
+      },
+      {
+        "key": "REPORT_MONTH",
+        "initialValue": "2026-10",
+        "currentValue": "2026-10",
+        "secret": false
+      }
+    ],
+    "_ref_id": "coll_5c02c0fc-e533-4eb6-a00a-7242939aba2a"
+  }
+]

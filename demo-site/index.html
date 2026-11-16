@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SLA Guard endpoints</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font: 100%/1.55 Inter, system-ui, sans-serif;
+      color: #172521;
+      background: #f3f7f5;
+    }
+
+    body { margin: 0; }
+    main { max-width: 56rem; margin: 0 auto; padding: 3.5rem 1.25rem; }
+    h1, h2, p, dl, dd, ul { margin: 0; }
+    h1 { font-size: clamp(2rem, 5vw, 3.25rem); line-height: 1.14; letter-spacing: -.045em; }
+    h2 { margin-bottom: .8rem; font-size: 1.2rem; letter-spacing: -.02em; }
+    section {
+      margin-top: 1.5rem;
+      padding: clamp(1rem, 4vw, 1.75rem);
+      border: 1px solid #d6e1db;
+      border-radius: .85rem;
+      background: white;
+    }
+
+    code { font: .875rem/1.5 ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+    a { color: #166247; text-underline-offset: .19em; }
+    a:focus-visible { outline: 2px solid #166247; outline-offset: .25rem; }
+    .route { display: flex; align-items: baseline; gap: .65rem; }
+    .method {
+      flex: none;
+      padding: .15rem .45rem;
+      border-radius: .3rem;
+      color: #18533e;
+      background: #e2f2e9;
+      font: 700 .73rem/1.55 ui-monospace, Consolas, monospace;
+    }
+    .method.post { color: #284b79; background: #e8effb; }
+    .headers, .description { color: #455750; font-size: .9rem; }
+    .headers { margin-top: .75rem; }
+    .headers code, .example { background: #f1f5f3; border-radius: .3rem; }
+    .headers code { padding: .1rem .3rem; }
+    .actions { margin-top: 1.25rem; }
+    .actions > div, .demo > li { padding: .9rem 0; border-top: 1px solid #e1e9e5; }
+    .actions > div { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: .25rem 1rem; }
+    dt { font-weight: 650; }
+    .example { display: block; width: fit-content; margin-top: .35rem; padding: .28rem .5rem; }
+    .demo { padding: 0; list-style: none; }
+    .demo .description { margin-top: .25rem; }
+    .actions > div:last-child, .demo > li:last-child { padding-bottom: 0; }
+
+    @media (max-width: 32rem) {
+      main { padding-top: 2rem; }
+      .actions > div { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header><h1>SLA Guard endpoints</h1></header>
+
+    <section aria-labelledby="webhook-title">
+      <h2 id="webhook-title">n8n webhook</h2>
+      <div class="route">
+        <span class="method post">POST</span>
+        <code>http://localhost:8080/webhook/sla-guard</code>
+      </div>
+      <p class="headers">
+        Send <code>Content-Type: application/json</code> and
+        <code>X-SLA-Key: &lt;SLA_WEBHOOK_KEY&gt;</code>.
+      </p>
+
+      <dl class="actions">
+        <div>
+          <dt><code>status</code></dt>
+          <dd>
+            <p class="description">Read the current status and recent checks. Defaults to the live dataset.</p>
+            <code class="example">{"action":"status"}</code>
+          </dd>
+        </div>
+        <div>
+          <dt><code>check</code></dt>
+          <dd>
+            <p class="description">Probe the website now and store one live check.</p>
+            <code class="example">{"action":"check"}</code>
+          </dd>
+        </div>
+        <div>
+          <dt><code>report</code></dt>
+          <dd>
+            <p class="description">Generate a monthly report. Omit the month to use the previous UTC month.</p>
+            <code class="example">{"action":"report","dataset":"demo"}</code>
+          </dd>
+        </div>
+        <div>
+          <dt><code>get_report</code></dt>
+          <dd>
+            <p class="description">Read a saved report and its draft. Supply the month as <code>YYYY-MM</code> in UTC.</p>
+            <code class="example">{"action":"get_report","dataset":"demo","month":"2026-10"}</code>
+          </dd>
+        </div>
+      </dl>
+    </section>
+
+    <section aria-labelledby="demo-title">
+      <h2 id="demo-title">Demo site</h2>
+      <ul class="demo">
+        <li>
+          <div class="route"><span class="method">GET</span> <code><a href="/health">/health</a></code></div>
+          <p class="description">Returns HTTP 200 when up and HTTP 503 during a simulated outage.</p>
+        </li>
+        <li>
+          <div class="route"><span class="method post">POST</span> <code>/admin/down</code></div>
+          <p class="description">Simulate an outage.</p>
+        </li>
+        <li>
+          <div class="route"><span class="method post">POST</span> <code>/admin/up</code></div>
+          <p class="description">Restore the demo site.</p>
+        </li>
+      </ul>
+      <p class="headers">Both admin routes require <code>Authorization: Bearer &lt;DEMO_CONTROL_TOKEN&gt;</code>.</p>
+    </section>
+  </main>
+</body>
+</html>

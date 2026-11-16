@@ -1,0 +1,423 @@
+{
+  "name": "SLA Guard 04 - Monthly SLA Assessment",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 5 0 1 * *"
+            }
+          ]
+        }
+      },
+      "id": "c9e28898-d753-4425-8d1e-25ade48cbe84",
+      "name": "Monthly at 00-05 UTC",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nnow.setUTCDate(1);\nnow.setUTCMonth(now.getUTCMonth() - 1);\nreturn [{ json: { dataset: 'live', month: now.toISOString().slice(0, 7), trace_id: String($execution.id) } }];"
+      },
+      "id": "822c27b6-3713-4d00-9e28-b4a8c44ab737",
+      "name": "Prepare Previous UTC Month",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "dataset",
+              "type": "string"
+            },
+            {
+              "name": "month",
+              "type": "string"
+            },
+            {
+              "name": "trace_id",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "b2fa7f56-6064-43ba-a7fd-a154753bf74b",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Set the project URL here. Select the database Header Auth credential on each HTTP node.\nconst SUPABASE_PROJECT_URL = 'https://YOUR_PROJECT_REF.supabase.co';\nconst { dataset, month, trace_id } = $input.first().json;\nconst fail = (code, error) => [{ json: { ok: false, code, error } }];\nif (!['live', 'demo'].includes(dataset) || typeof trace_id !== 'string' || !trace_id.trim() || trace_id.length > 200) {\n  return fail('INVALID_REQUEST', 'Use dataset live or demo and a non-empty trace_id of at most 200 characters.');\n}\nconst currentMonth = new Date().toISOString().slice(0, 7);\nconst validMonth = typeof month === 'string' && month.length === 7 && /^\\d{4}-(0[1-9]|1[0-2])$/.test(month)\n  && !month.startsWith('0000') && month <= currentMonth;\nif (!validMonth) return fail('INVALID_REQUEST', 'month must be a valid YYYY-MM through the current UTC month.');\nconst supabase_url = SUPABASE_PROJECT_URL.replace(/\\/+$/, '');\nif (!/^https?:\\/\\/[a-z0-9.-]+(?::\\d{1,5})?$/i.test(supabase_url) || supabase_url.includes('YOUR_PROJECT_REF')) {\n  return fail('DEPENDENCY_ERROR', 'The Supabase project URL is unconfigured.');\n}\nreturn [{ json: { ok: true, dataset, month, trace_id, supabase_url, execution_id: String($execution.id) } }];"
+      },
+      "id": "c2c5421b-5ae8-4972-a0d5-045dd730bb1c",
+      "name": "Settings and Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.ok ? 0 : 1 }}"
+      },
+      "id": "d205951a-bc3e-4654-9e5a-fa4c6d0d32dd",
+      "name": "Request Valid?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        720,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.supabase_url + '/rest/v1/rpc/sg_monthly_report' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { p_service_id: 'website', p_month: $json.month + '-01', p_source: $json.dataset, p_execution_id: $json.execution_id } }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "e11524b0-97f2-4f58-85ea-91a8d35f286c",
+      "name": "Save Monthly Assessment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const { body } = $input.first().json;\nconst isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);\nconst fail = (code, error) => [{ json: { ok: false, code, error } }];\nconst isReportId = value => typeof value === 'string' && value.length === 36\n  && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);\nconst { dataset, month, trace_id } = $('Settings and Validation').first().json;\nconst report = body?.report;\nif (!isReportId(body?.report_id) || !Number.isSafeInteger(body.revision) || body.revision < 1\n    || !isObject(report) || report.service_id !== 'website' || report.dataset !== dataset || report.month !== month\n    || typeof report.is_final !== 'boolean' || typeof report.unknown_seconds !== 'number'\n    || !['insufficient_data', 'provisional', 'needs_data_review', 'breach_detected', 'within_sla'].includes(report.assessment)\n    || typeof body.duplicate !== 'boolean') {\n  return fail('DEPENDENCY_ERROR', 'Supabase returned an invalid monthly assessment.');\n}\nconst { report_id, revision, duplicate } = body;\nconst eligible = report.is_final === true && report.unknown_seconds === 0 && report.assessment === 'breach_detected';\nconst result = { report_id, revision, report, claim_draft: null, duplicate };\nreturn [{ json: { ok: true, eligible, report_id, revision, dataset, trace_id, result } }];"
+      },
+      "id": "36d0857a-9442-4d52-81ed-359059aeae4b",
+      "name": "Validate Saved Assessment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 3,
+        "output": "={{ !$json.ok ? 2 : $json.eligible ? 0 : 1 }}"
+      },
+      "id": "c483ecc3-9c81-4d9b-9be5-f6f2d3c145f9",
+      "name": "Draft Eligible?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_05_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "report_id": "={{ $json.report_id }}",
+            "revision": "={{ $json.revision }}",
+            "dataset": "={{ $json.dataset }}",
+            "trace_id": "={{ $json.trace_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "report_id",
+              "displayName": "report_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "revision",
+              "displayName": "revision",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            },
+            {
+              "id": "dataset",
+              "displayName": "dataset",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "trace_id",
+              "displayName": "trace_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "05b1bbd0-5480-402f-ac23-cb480785445e",
+      "name": "Call 05 - Build Claim Draft",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        1680,
+        -140
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "notes": "Bind the imported workflow 05. The report is saved before the claim is generated."
+    },
+    {
+      "parameters": {
+        "jsCode": "const fail = (code, error) => [{ json: { ok: false, code, error } }];\nconst hasDraftHeading = text => typeof text === 'string' && text.split(/\\r?\\n/, 1)[0] === 'SLA GUARD CLAIM DRAFT';\nconst saved = $('Validate Saved Assessment').first().json.result;\nconst items = $input.all();\nconst reply = items.length === 1 ? items[0].json : null;\nconst codes = ['INVALID_REQUEST', 'REPORT_NOT_FOUND', 'STALE_REPORT', 'NOT_ELIGIBLE', 'DEPENDENCY_ERROR'];\nif (reply?.ok === false && codes.includes(reply.code) && typeof reply.error === 'string' && reply.error.trim()) {\n  return fail(reply.code, reply.error);\n}\nif (reply?.ok !== true || reply.result?.report_id !== saved.report_id\n    || reply.result.revision !== saved.revision || !hasDraftHeading(reply.result.claim_draft)) {\n  return fail('DEPENDENCY_ERROR', 'The claim workflow failed or returned an invalid result.');\n}\nreturn [{ json: { ok: true, result: { ...saved, claim_draft: reply.result.claim_draft } } }];"
+      },
+      "id": "7163e0b3-1cdd-471f-a622-d968758e41a8",
+      "name": "Return Assessment with Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, result: $input.first().json.result } }];"
+      },
+      "id": "0e35bb3e-c9b4-40a1-aea1-c91ef00eefa5",
+      "name": "Return Assessment without Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all();"
+      },
+      "id": "ed972371-f420-49bf-bafe-94820e39093e",
+      "name": "Return Validation Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ok: false, code: 'DEPENDENCY_ERROR', error: \"Could not save the monthly assessment in Supabase.\" } }];"
+      },
+      "id": "dc27772b-f2a9-4d99-9bdf-179e05b12994",
+      "name": "Return Database Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        300
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Monthly at 00-05 UTC": {
+      "main": [
+        [
+          {
+            "node": "Prepare Previous UTC Month",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Previous UTC Month": {
+      "main": [
+        [
+          {
+            "node": "Settings and Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Settings and Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings and Validation": {
+      "main": [
+        [
+          {
+            "node": "Request Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Valid?": {
+      "main": [
+        [
+          {
+            "node": "Save Monthly Assessment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Monthly Assessment": {
+      "main": [
+        [
+          {
+            "node": "Validate Saved Assessment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Database Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Saved Assessment": {
+      "main": [
+        [
+          {
+            "node": "Draft Eligible?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Eligible?": {
+      "main": [
+        [
+          {
+            "node": "Call 05 - Build Claim Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Assessment without Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 05 - Build Claim Draft": {
+      "main": [
+        [
+          {
+            "node": "Return Assessment with Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC",
+    "executionTimeout": 240,
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": []
+}

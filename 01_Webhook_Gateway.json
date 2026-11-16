@@ -1,0 +1,418 @@
+{
+  "name": "SLA Guard 01 - Webhook Gateway",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sla-guard",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "38edb906-31c8-4386-b433-ccfc2d7ea60c",
+      "name": "Receive Authenticated SLA Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        260
+      ],
+      "webhookId": "aea34f2d-1ad7-4f9b-ac45-dd0f0aa17628",
+      "notes": "Bind the SLA Guard - Webhook Header Auth credential. Header name: X-SLA-Key."
+    },
+    {
+      "parameters": {
+        "jsCode": "const { body, headers } = $input.first().json;\nconst trace_id = String($execution.id);\nconst isObject = body !== null && typeof body === 'object' && !Array.isArray(body);\nconst supplied = isObject ? body : {};\nconst action = Object.hasOwn(supplied, 'action') ? supplied.action : 'status';\nconst dataset = Object.hasOwn(supplied, 'dataset') ? supplied.dataset : 'live';\nconst hasMonth = Object.hasOwn(supplied, 'month');\nconst mediaType = String(headers?.['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase();\n\nfunction invalid(validationError) {\n  return [{ json: {\n    action: isObject && typeof action === 'string' ? action : null,\n    trace_id,\n    route: 3,\n    validationError,\n    childInput: {},\n  } }];\n}\n\nif (mediaType !== 'application/json' || !isObject) {\n  return invalid('Send a JSON object with Content-Type: application/json.');\n}\nif (Object.keys(body).some((key) => !['action', 'dataset', 'month'].includes(key))) {\n  return invalid('Only action, dataset and month are allowed.');\n}\nif (!['check', 'status', 'report', 'get_report'].includes(action)) {\n  return invalid('action must be check, status, report or get_report.');\n}\nif (!['live', 'demo'].includes(dataset)) {\n  return invalid('dataset must be live or demo.');\n}\nif (action === 'check' && dataset !== 'live') {\n  return invalid('check requires the live dataset.');\n}\nif ((action === 'check' || action === 'status') && hasMonth) {\n  return invalid('month is only allowed for report and get_report.');\n}\nif (action === 'get_report' && !hasMonth) {\n  return invalid('month is required for get_report.');\n}\n\nlet month = '';\nif (action === 'report' || action === 'get_report') {\n  const now = new Date();\n  const currentMonth = now.toISOString().slice(0, 7);\n  if (hasMonth) {\n    month = body.month;\n  } else {\n    now.setUTCDate(1);\n    now.setUTCMonth(now.getUTCMonth() - 1);\n    month = now.toISOString().slice(0, 7);\n  }\n  if (typeof month !== 'string' || month.length !== 7 ||\n      !/^\\d{4}-(0[1-9]|1[0-2])$/.test(month) || month.startsWith('0000') ||\n      month > currentMonth) {\n    return invalid('month must be a valid YYYY-MM through the current UTC month.');\n  }\n}\n\nconst routes = { check: 0, status: 1, get_report: 1, report: 2 };\nconst route = routes[action];\nconst childInput = { dataset, trace_id };\nif (route !== 0) childInput.month = month;\nif (route === 1) childInput.action = action;\n\nreturn [{ json: { action, trace_id, route, childInput } }];"
+      },
+      "id": "2773152a-6d7b-4aaa-9559-2e9d4a9b9f0b",
+      "name": "Validate Gateway Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: $input.first().json.childInput }];"
+      },
+      "id": "f652d688-907d-4188-a748-9bbe74c84dec",
+      "name": "Prepare Exact Child Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 4,
+        "output": "={{ $('Validate Gateway Request').first().json.route }}"
+      },
+      "id": "8081a1b7-248f-4cee-9dbf-2c711c345293",
+      "name": "Route Request to SLA Workflow",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        720,
+        240
+      ],
+      "notes": "Output 0 runs check. Output 1 reads status or a saved report. Output 2 generates a report. Output 3 returns a validation error."
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_02_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "dataset": "={{ $json.dataset }}",
+            "trace_id": "={{ $json.trace_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "dataset",
+              "displayName": "dataset",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "trace_id",
+              "displayName": "trace_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "6f7659da-5762-41e0-9329-01183ba4be8a",
+      "name": "Call 02 - Run Live Check",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        1000,
+        0
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "notes": "Replace REPLACE_WITH_02_WORKFLOW_ID with the corresponding n8n workflow ID. Inputs: dataset, trace_id."
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_03_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "action": "={{ $json.action }}",
+            "dataset": "={{ $json.dataset }}",
+            "month": "={{ $json.month }}",
+            "trace_id": "={{ $json.trace_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "dataset",
+              "displayName": "dataset",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "month",
+              "displayName": "month",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "trace_id",
+              "displayName": "trace_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "f9890ba0-9398-4429-8c27-098c5e6140c9",
+      "name": "Call 03 - Read Status or Saved Report",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        1000,
+        180
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "notes": "Replace REPLACE_WITH_03_WORKFLOW_ID with the corresponding n8n workflow ID. Inputs: action, dataset, month, trace_id."
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_04_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "dataset": "={{ $json.dataset }}",
+            "month": "={{ $json.month }}",
+            "trace_id": "={{ $json.trace_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "dataset",
+              "displayName": "dataset",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "month",
+              "displayName": "month",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "trace_id",
+              "displayName": "trace_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "57cc0c6a-edcf-4725-892a-5d4e90000d46",
+      "name": "Call 04 - Generate Monthly Report",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        1000,
+        360
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "notes": "Replace REPLACE_WITH_04_WORKFLOW_ID with the corresponding n8n workflow ID. Inputs: dataset, month, trace_id."
+    },
+    {
+      "parameters": {
+        "jsCode": "const request = $('Validate Gateway Request').first().json;\nconst statusByCode = {\n  INVALID_REQUEST: 400,\n  REPORT_NOT_FOUND: 404,\n  STALE_REPORT: 409,\n  NOT_ELIGIBLE: 409,\n  DEPENDENCY_ERROR: 502,\n};\n\nfunction respond(status, fields) {\n  return [{ json: {\n    status,\n    body: { ...fields, action: request.action, execution_id: request.trace_id },\n  } }];\n}\n\nfunction failure(code, error) {\n  return respond(statusByCode[code], { ok: false, code, error });\n}\n\nif (request.validationError) {\n  return failure('INVALID_REQUEST', request.validationError);\n}\n\nconst items = $input.all();\nconst reply = items.length === 1 ? items[0].json : null;\nif (reply?.ok === true && reply.result !== null && typeof reply.result === 'object' && !Array.isArray(reply.result)) {\n  return respond(200, { ok: true, result: reply.result });\n}\nif (reply?.ok === false && typeof reply.code === 'string' &&\n    Object.hasOwn(statusByCode, reply.code) &&\n    typeof reply.error === 'string' && reply.error.trim() !== '') {\n  return failure(reply.code, reply.error);\n}\nreturn failure('DEPENDENCY_ERROR', 'The sub-workflow failed or returned an invalid response.');"
+      },
+      "id": "a1e1fda8-cef2-4f4f-8523-fc17f3c8cb5b",
+      "name": "Build Gateway JSON Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      },
+      "id": "d27df339-9d4a-4c70-bca5-3064eb5f1bae",
+      "name": "Respond to SLA Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1520,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Receive Authenticated SLA Request": {
+      "main": [
+        [
+          {
+            "node": "Validate Gateway Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Gateway Request": {
+      "main": [
+        [
+          {
+            "node": "Prepare Exact Child Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Exact Child Input": {
+      "main": [
+        [
+          {
+            "node": "Route Request to SLA Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Request to SLA Workflow": {
+      "main": [
+        [
+          {
+            "node": "Call 02 - Run Live Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call 03 - Read Status or Saved Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call 04 - Generate Monthly Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Gateway JSON Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 02 - Run Live Check": {
+      "main": [
+        [
+          {
+            "node": "Build Gateway JSON Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 03 - Read Status or Saved Report": {
+      "main": [
+        [
+          {
+            "node": "Build Gateway JSON Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 04 - Generate Monthly Report": {
+      "main": [
+        [
+          {
+            "node": "Build Gateway JSON Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Gateway JSON Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to SLA Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC",
+    "executionTimeout": 240,
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {},
+  "tags": []
+}

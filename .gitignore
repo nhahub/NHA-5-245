@@ -1,0 +1,28 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+n8n-credentials*.json
+
+# Frontend dependencies, builds, and test output
+node_modules/
+dist/
+.vite/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+
+# Python environments and caches
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Logs, generated evidence, backups, and OS metadata
+*.log
+report.json
+claim-draft.txt
+n8n-backup.tar.gz
+.DS_Store
+Thumbs.db

@@ -1,0 +1,297 @@
+{
+  "name": "SLA Guard 03 - Status Lookup",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "action",
+              "type": "string"
+            },
+            {
+              "name": "dataset",
+              "type": "string"
+            },
+            {
+              "name": "month",
+              "type": "string"
+            },
+            {
+              "name": "trace_id",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "00815d90-5561-4c25-9db5-bd67ded04928",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Set the project URL here. Select the database Header Auth credential on each HTTP node.\nconst SUPABASE_PROJECT_URL = 'https://YOUR_PROJECT_REF.supabase.co';\nconst { action, dataset, month, trace_id } = $input.first().json;\nconst fail = (code, error) => [{ json: { ok: false, code, error } }];\nif (!['live', 'demo'].includes(dataset) || typeof trace_id !== 'string' || !trace_id.trim() || trace_id.length > 200) {\n  return fail('INVALID_REQUEST', 'Use dataset live or demo and a non-empty trace_id of at most 200 characters.');\n}\nconst currentMonth = new Date().toISOString().slice(0, 7);\nconst validMonth = typeof month === 'string' && month.length === 7 && /^\\d{4}-(0[1-9]|1[0-2])$/.test(month)\n  && !month.startsWith('0000') && month <= currentMonth;\nif (!((action === 'status' && month === '') || (action === 'get_report' && validMonth))) {\n  return fail('INVALID_REQUEST', 'Use status with an empty month or get_report with a valid YYYY-MM through the current UTC month.');\n}\nconst supabase_url = SUPABASE_PROJECT_URL.replace(/\\/+$/, '');\nif (!/^https?:\\/\\/[a-z0-9.-]+(?::\\d{1,5})?$/i.test(supabase_url) || supabase_url.includes('YOUR_PROJECT_REF')) {\n  return fail('DEPENDENCY_ERROR', 'The Supabase project URL is unconfigured.');\n}\nreturn [{ json: { ok: true, action, dataset, month, trace_id, supabase_url } }];"
+      },
+      "id": "2a252075-dfe9-44ef-838c-04d558dcfe47",
+      "name": "Settings and Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 3,
+        "output": "={{ !$json.ok ? 2 : $json.action === 'status' ? 0 : 1 }}"
+      },
+      "id": "b63c2a2b-1aef-4e91-94c4-fc656bbb58d8",
+      "name": "Route Lookup",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        480,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.supabase_url + '/rest/v1/rpc/sg_status' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { p_service_id: 'website', p_source: $json.dataset } }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "13a89cd6-2977-4ea7-9ae5-f8a55fdd47ee",
+      "name": "Read Site Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.supabase_url + '/rest/v1/sg_reports' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "service_id",
+              "value": "eq.website"
+            },
+            {
+              "name": "source",
+              "value": "={{ 'eq.' + $json.dataset }}"
+            },
+            {
+              "name": "month",
+              "value": "={{ 'eq.' + $json.month + '-01' }}"
+            },
+            {
+              "name": "select",
+              "value": "id,revision,report,claim_draft"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "67ca553c-8ee6-477b-914c-6cfd60336aa1",
+      "name": "Load Saved Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        220
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const { body } = $input.first().json;\nconst isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);\nconst fail = (code, error) => [{ json: { ok: false, code, error } }];\nconst { dataset } = $('Settings and Validation').first().json;\nif (!isObject(body) || body.dataset !== dataset || !['up', 'down', 'unknown'].includes(body.current_status)\n    || !(body.latest_check === null || isObject(body.latest_check)) || !Array.isArray(body.recent_checks)) {\n  return fail('DEPENDENCY_ERROR', 'Supabase returned an invalid status response.');\n}\nreturn [{ json: { ok: true, result: body } }];"
+      },
+      "id": "45f9dac8-81c7-49cb-bca7-0c27e1f5da8c",
+      "name": "Return Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { body } = $input.first().json;\nconst isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);\nconst fail = (code, error) => [{ json: { ok: false, code, error } }];\nconst isReportId = value => typeof value === 'string' && value.length === 36\n  && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);\nconst hasDraftHeading = text => typeof text === 'string' && text.split(/\\r?\\n/, 1)[0] === 'SLA GUARD CLAIM DRAFT';\nconst { month, dataset } = $('Settings and Validation').first().json;\nif (Array.isArray(body) && body.length === 0) {\n  return fail('REPORT_NOT_FOUND', 'No saved report exists for the requested month and dataset.');\n}\nconst row = Array.isArray(body) && body.length === 1 ? body[0] : null;\nconst report = row?.report;\nif (!isReportId(row?.id) || !Number.isSafeInteger(row.revision) || row.revision < 1 || !isObject(report)\n    || report.service_id !== 'website' || report.month !== month || report.dataset !== dataset) {\n  return fail('DEPENDENCY_ERROR', 'Supabase returned an invalid saved report.');\n}\nconst claim_draft = report.is_final === true && report.unknown_seconds === 0 && report.assessment === 'breach_detected' && hasDraftHeading(row.claim_draft)\n  ? row.claim_draft : null;\nreturn [{ json: { ok: true, result: { report_id: row.id, revision: row.revision, report, claim_draft } } }];"
+      },
+      "id": "55c93e62-7ce2-4cf9-a46e-ec1183350585",
+      "name": "Return Saved Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ok: false, code: 'DEPENDENCY_ERROR', error: \"Could not read SLA Guard data from Supabase.\" } }];"
+      },
+      "id": "f15c9a64-33cd-4a17-80e8-2bc46b6b2bfd",
+      "name": "Return Database Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all();"
+      },
+      "id": "d0cd35cc-474c-4684-a797-d7b54b85aee8",
+      "name": "Return Invalid Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        420
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Settings and Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings and Validation": {
+      "main": [
+        [
+          {
+            "node": "Route Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Lookup": {
+      "main": [
+        [
+          {
+            "node": "Read Site Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Saved Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Invalid Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Site Status": {
+      "main": [
+        [
+          {
+            "node": "Return Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Database Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Saved Report": {
+      "main": [
+        [
+          {
+            "node": "Return Saved Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Database Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC",
+    "executionTimeout": 240,
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": []
+}

@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "target": "ES2023", "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext", "moduleResolution": "Bundler", "jsx": "react-jsx",
+    "strict": true, "allowImportingTsExtensions": true, "verbatimModuleSyntax": true,
+    "noUnusedLocals": true, "noUnusedParameters": true, "noEmit": true,
+    "skipLibCheck": true, "types": ["node", "vite/client"]
+  },
+  "include": ["src", "server", "shared", "test", "vite.config.ts", "playwright.config.ts"]
+}

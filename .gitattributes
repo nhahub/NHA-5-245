@@ -1,0 +1,2 @@
+# Docker runs shell scripts in Linux containers, including on Windows hosts.
+*.sh text eol=lf

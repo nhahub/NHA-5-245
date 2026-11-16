@@ -1,0 +1,440 @@
+{
+  "name": "SLA Guard 05 - Claim Draft",
+  "nodes": [
+    {
+      "id": "a1c0e5d2-5f41-4b8a-9c3e-11d4f6a8b201",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        280
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "report_id",
+              "type": "string"
+            },
+            {
+              "name": "revision",
+              "type": "number"
+            },
+            {
+              "name": "dataset",
+              "type": "string"
+            },
+            {
+              "name": "trace_id",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "notes": "Private sub-workflow. Inputs: report_id (UUID), revision (positive integer), dataset (live|demo), trace_id (non-empty string)."
+    },
+    {
+      "id": "b2d1f6e3-6a52-4c9b-8d4f-22e5a7b9c302",
+      "name": "Settings and Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        280
+      ],
+      "parameters": {
+        "jsCode": "// EDIT THIS VALUE. Secrets belong in n8n credentials, never here.\nconst SETTINGS = {\n  supabaseUrl: 'https://YOUR_PROJECT_REF.supabase.co',\n};\nconst input = $input.first().json || {};\nconst fail = (code, error) => [{ json: { ok: false, code, error } }];\nconst reportId = input.report_id;\nconst dataset = input.dataset;\nconst traceId = input.trace_id;\nlet revision = input.revision;\nif (typeof revision === 'string' && /^\\d+$/.test(revision.trim())) revision = Number(revision);\nconst uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nif (typeof reportId !== 'string' || !uuidRe.test(reportId)) {\n  return fail('INVALID_REQUEST', 'report_id must be a UUID.');\n}\nif (!Number.isSafeInteger(revision) || revision < 1) {\n  return fail('INVALID_REQUEST', 'revision must be a positive integer.');\n}\nif (dataset !== 'live' && dataset !== 'demo') {\n  return fail('INVALID_REQUEST', 'dataset must be live or demo.');\n}\nif (typeof traceId !== 'string' || traceId.trim() === '' || traceId.length > 200) {\n  return fail('INVALID_REQUEST', 'trace_id must be a non-empty string of at most 200 characters.');\n}\nconst supabaseUrl = String(SETTINGS.supabaseUrl || '').replace(/\\/+$/, '');\nif (!/^https?:\\/\\/[a-z0-9.-]+(?::\\d{1,5})?$/i.test(supabaseUrl) || supabaseUrl.includes('YOUR_PROJECT_REF')) {\n  return fail('DEPENDENCY_ERROR', 'Set your Supabase Project URL in Settings and Validation before running.');\n}\nreturn [{ json: {\n  ok: true,\n  supabase_url: supabaseUrl,\n  service_id: 'website',\n  report_id: reportId,\n  revision,\n  dataset,\n  trace_id: traceId,\n} }];"
+      },
+      "notes": "Only configuration in this workflow: Supabase Project URL. Bind SLA Guard - Supabase Header Auth (apikey) on the two HTTP nodes.",
+      "notesInFlow": true
+    },
+    {
+      "id": "c3e2a7f4-7b63-4dac-9e50-33f6b8cad403",
+      "name": "Request Valid?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        480,
+        280
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.ok ? 0 : 1 }}"
+      },
+      "notes": "Outputs: 0 continue; 1 Return Error. Invalid input never calls Supabase."
+    },
+    {
+      "id": "d4f3b8a5-8c74-4ebd-af61-44a7c9dbe504",
+      "name": "Load Saved Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        160
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Settings and Validation').first().json.supabase_url + '/rest/v1/sg_reports' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "={{ 'eq.' + $('Settings and Validation').first().json.report_id }}"
+            },
+            {
+              "name": "service_id",
+              "value": "eq.website"
+            },
+            {
+              "name": "source",
+              "value": "={{ 'eq.' + $('Settings and Validation').first().json.dataset }}"
+            },
+            {
+              "name": "select",
+              "value": "id,revision,report,claim_draft"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput",
+      "notes": "Select SLA Guard - Supabase Header Auth (apikey). Full response keeps an empty array in the body."
+    },
+    {
+      "id": "e5a4c9b6-9d85-4fce-b072-55b8dae0f605",
+      "name": "Evaluate Saved Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        160
+      ],
+      "parameters": {
+        "jsCode": "const settings = $('Settings and Validation').first().json;\nconst fail = (code, error) => [{ json: { ok: false, code, error } }];\nfunction rowsFromFullResponse(raw) {\n  if (raw == null) return null;\n  let body = Object.prototype.hasOwnProperty.call(raw, 'body') ? raw.body : raw;\n  if (typeof body === 'string') {\n    try { body = JSON.parse(body); } catch { return null; }\n  }\n  if (Array.isArray(body)) return body;\n  return null;\n}\nconst rows = rowsFromFullResponse($input.first().json);\nif (rows === null) return fail('DEPENDENCY_ERROR', 'Unexpected response shape from Load Saved Report.');\nif (rows.length === 0) return fail('REPORT_NOT_FOUND', 'No saved report matched report_id, service website, and dataset.');\nif (rows.length !== 1) return fail('DEPENDENCY_ERROR', 'Unexpected response shape from Load Saved Report.');\nconst row = rows[0];\nif (!row || typeof row !== 'object' || typeof row.id !== 'string') {\n  return fail('DEPENDENCY_ERROR', 'Unexpected response shape from Load Saved Report.');\n}\nif (row.id !== settings.report_id) {\n  return fail('DEPENDENCY_ERROR', 'Returned report id did not match the request.');\n}\nif (Number(row.revision) !== Number(settings.revision)) {\n  return fail('STALE_REPORT', 'Saved revision does not match the requested revision.');\n}\nconst report = row.report;\nif (!report || typeof report !== 'object' || Array.isArray(report)) {\n  return fail('DEPENDENCY_ERROR', 'Saved report JSON is missing or invalid.');\n}\nif (!(report.is_final === true && report.unknown_seconds === 0 && report.assessment === 'breach_detected')) {\n  return fail('NOT_ELIGIBLE', 'Report is not a completed, fully covered breach_detected assessment.');\n}\nconst snap = report.contract_snapshot;\nconst creditPct = report.candidate_credit_pct;\nconst creditAmount = report.candidate_credit_amount;\nconst currency = report.currency;\nif (!snap || typeof snap !== 'object' || Array.isArray(snap) || creditPct == null || creditAmount == null || typeof currency !== 'string' || !currency) {\n  return fail('DEPENDENCY_ERROR', 'Missing contract_snapshot or credit values on the saved report.');\n}\nif (snap.provider_name == null || snap.name == null || snap.contract_reference == null || snap.monthly_fee == null || snap.credit_pct == null || snap.sla_target_pct == null) {\n  return fail('DEPENDENCY_ERROR', 'Missing contract_snapshot or credit values on the saved report.');\n}\nconst downSeconds = Number(report.down_seconds);\nconst availability = report.estimated_monthly_availability_pct;\nif (!Number.isFinite(downSeconds) || downSeconds < 0 || availability == null) {\n  return fail('DEPENDENCY_ERROR', 'Missing downtime or availability values on the saved report.');\n}\nconst minutesText = String(Number((downSeconds / 60).toFixed(3)));\nconst money = (n) => Number(n).toFixed(2);\nconst lines = ['SLA GUARD CLAIM DRAFT'];\nif (settings.dataset === 'demo') lines.push('DEMO ONLY - SYNTHETIC EVIDENCE');\nlines.push('Status: DRAFT FOR HUMAN REVIEW - NOT SUBMITTED');\nlines.push('Provider: ' + snap.provider_name);\nlines.push('Service: ' + snap.name);\nlines.push('Billing month (UTC): ' + report.month);\nlines.push('Contract reference: ' + snap.contract_reference);\nlines.push('Estimated downtime: ' + minutesText + ' minutes (' + downSeconds + ' seconds)');\nlines.push('Observed uptime: ' + availability + '% against SLA target ' + snap.sla_target_pct + '%');\nlines.push('Evidence: report ID ' + row.id + ', revision ' + row.revision + ', dataset ' + settings.dataset);\nlines.push('Credit basis: monthly fee ' + money(snap.monthly_fee) + ' ' + currency + '; credit rate ' + snap.credit_pct + '%');\nlines.push('Candidate service credit: ' + creditPct + '% = ' + money(creditAmount) + ' ' + currency);\nlines.push('Review notes: These are polling estimates from one monitoring location. Provider responsibility, contractual exclusions, maintenance, and any claim deadline require human verification. This draft has not been submitted.');\nif (settings.dataset === 'demo') {\n  lines.push('SYNTHETIC DATA. The credit is an example and must never be submitted as a real claim.');\n}\nreturn [{ json: {\n  ok: true,\n  supabase_url: settings.supabase_url,\n  report_id: row.id,\n  revision: Number(row.revision),\n  dataset: settings.dataset,\n  claim_draft: lines.join('\\n'),\n} }];"
+      }
+    },
+    {
+      "id": "f6b5dac7-ae96-40df-c183-66c9ebf10716",
+      "name": "Report Eligible?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1220,
+        160
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.ok ? 0 : 1 }}"
+      },
+      "notes": "Outputs: 0 save draft; 1 Return Error."
+    },
+    {
+      "id": "07c6ebd8-bf07-41e0-d294-77daf0a21827",
+      "name": "Save Claim Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        40
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Settings and Validation').first().json.supabase_url + '/rest/v1/sg_reports' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "={{ 'eq.' + $json.report_id }}"
+            },
+            {
+              "name": "revision",
+              "value": "={{ 'eq.' + $json.revision }}"
+            },
+            {
+              "name": "service_id",
+              "value": "eq.website"
+            },
+            {
+              "name": "source",
+              "value": "={{ 'eq.' + $json.dataset }}"
+            },
+            {
+              "name": "select",
+              "value": "id,revision,claim_draft"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { claim_draft: $json.claim_draft } }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput",
+      "notes": "Select SLA Guard - Supabase Header Auth (apikey). PATCH only claim_draft; revision filter rejects a newer row."
+    },
+    {
+      "id": "18d7fce9-c018-42f1-e3a5-88eb01b32938",
+      "name": "Confirm Saved Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        40
+      ],
+      "parameters": {
+        "jsCode": "const expected = $('Evaluate Saved Report').first().json;\nconst fail = (code, error) => [{ json: { ok: false, code, error } }];\nfunction rowsFromFullResponse(raw) {\n  if (raw == null) return null;\n  let body = Object.prototype.hasOwnProperty.call(raw, 'body') ? raw.body : raw;\n  if (typeof body === 'string') {\n    try { body = JSON.parse(body); } catch { return null; }\n  }\n  if (Array.isArray(body)) return body;\n  return null;\n}\nconst rows = rowsFromFullResponse($input.first().json);\nif (rows === null) return fail('DEPENDENCY_ERROR', 'Unexpected response shape from Save Claim Draft.');\nif (rows.length === 0) return fail('STALE_REPORT', 'No row updated; a newer revision cannot be overwritten.');\nif (rows.length !== 1) return fail('DEPENDENCY_ERROR', 'Unexpected response shape from Save Claim Draft.');\nconst row = rows[0];\nif (!row || typeof row !== 'object') {\n  return fail('DEPENDENCY_ERROR', 'Unexpected response shape from Save Claim Draft.');\n}\nif (row.id !== expected.report_id || Number(row.revision) !== Number(expected.revision) || row.claim_draft !== expected.claim_draft) {\n  return fail('DEPENDENCY_ERROR', 'Returned saved row did not match the claim draft that was sent.');\n}\nreturn [{ json: {\n  ok: true,\n  report_id: row.id,\n  revision: Number(row.revision),\n  claim_draft: row.claim_draft,\n} }];"
+      }
+    },
+    {
+      "id": "29e80dfa-d129-4302-f4b6-99fc12c43a49",
+      "name": "Saved OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1940,
+        40
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.ok ? 0 : 1 }}"
+      },
+      "notes": "Outputs: 0 Return Success; 1 Return Error."
+    },
+    {
+      "id": "3af91e0b-e23a-4413-05c7-a0ad23d54b5a",
+      "name": "Return Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        -40
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nreturn [{ json: {\n  ok: true,\n  result: {\n    report_id: input.report_id,\n    revision: input.revision,\n    claim_draft: input.claim_draft,\n  },\n} }];"
+      }
+    },
+    {
+      "id": "4b0a2f1c-f34b-4524-16d8-b1be34e65c6b",
+      "name": "Return Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json || {};\nconst allowed = ['INVALID_REQUEST', 'REPORT_NOT_FOUND', 'STALE_REPORT', 'NOT_ELIGIBLE', 'DEPENDENCY_ERROR'];\nif (input.ok === false && allowed.includes(input.code)) {\n  return [{ json: { ok: false, code: input.code, error: String(input.error) } }];\n}\nconst raw = input.error && typeof input.error === 'object'\n  ? (input.error.message || JSON.stringify(input.error))\n  : (input.error || input.message || JSON.stringify(input));\nreturn [{ json: {\n  ok: false,\n  code: 'DEPENDENCY_ERROR',\n  error: String(raw).slice(0, 500),\n} }];"
+      }
+    },
+    {
+      "id": "5c1b302d-045c-4635-27e9-c2cf45f76d7c",
+      "name": "Setup Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -120
+      ],
+      "parameters": {
+        "content": "## SLA Guard 05 | Claim Draft\nPrivate sub-workflow. Keep inactive until team assembly.\n1. Set Project URL in Settings and Validation.\n2. Bind SLA Guard - Supabase (Header Auth, apikey) on Load Saved Report and Save Claim Draft.\n3. Give this workflow ID to Sherif (04).\nReads saved SLA numbers only. First line of the draft is SLA GUARD CLAIM DRAFT.",
+        "height": 250,
+        "width": 700,
+        "color": 5
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Settings and Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings and Validation": {
+      "main": [
+        [
+          {
+            "node": "Request Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Valid?": {
+      "main": [
+        [
+          {
+            "node": "Load Saved Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Saved Report": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Saved Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Saved Report": {
+      "main": [
+        [
+          {
+            "node": "Report Eligible?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report Eligible?": {
+      "main": [
+        [
+          {
+            "node": "Save Claim Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Claim Draft": {
+      "main": [
+        [
+          {
+            "node": "Confirm Saved Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm Saved Draft": {
+      "main": [
+        [
+          {
+            "node": "Saved OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Saved OK?": {
+      "main": [
+        [
+          {
+            "node": "Return Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC",
+    "executionTimeout": 120,
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "6e4c8a21-9b70-4d15-a3f8-0c1d2e3f4a5b",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

@@ -1,0 +1,85 @@
+name: sla-guard
+
+services:
+  dashboard:
+    build: ./dashboard
+    restart: unless-stopped
+    environment:
+      DASHBOARD_BIND: 0.0.0.0
+      DASHBOARD_PORT: "8083"
+      SLA_WEBHOOK_URL: ${SLA_DOCKER_WEBHOOK_URL:-http://n8n:5678/webhook/sla-guard}
+      SLA_WEBHOOK_KEY: ${SLA_WEBHOOK_KEY:-}
+    ports:
+      - "127.0.0.1:${LOCAL_DASHBOARD_PORT:-8083}:8083"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8083/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  demo-site:
+    image: python:3.13-alpine
+    restart: unless-stopped
+    command: ["python", "-u", "/app/server.py"]
+    environment:
+      DEMO_CONTROL_TOKEN: ${DEMO_CONTROL_TOKEN:?Set DEMO_CONTROL_TOKEN in .env}
+    ports:
+      - "127.0.0.1:${LOCAL_DEMO_PORT:-8082}:8000"
+    volumes:
+      - ./demo-site:/app:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "python", "-c", "import http.client; conn = http.client.HTTPConnection('127.0.0.1', 8000, timeout=3); conn.request('GET', '/health'); assert conn.getresponse().status in (200, 503)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  database:
+    profiles: ["local-data"]
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sla_guard
+      POSTGRES_PASSWORD: ${SLA_DB_PASSWORD:?Set SLA_DB_PASSWORD in .env}
+      SLA_DATA_DB_PASSWORD: ${SLA_DATA_DB_PASSWORD:?Set SLA_DATA_DB_PASSWORD in .env}
+    volumes:
+      - database_data:/var/lib/postgresql/data
+      - ./supabase/init-local.sh:/docker-entrypoint-initdb.d/01-init-sla-guard.sh:ro
+      - ./supabase/schema.sql:/sla-guard/schema.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "sla_guard"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  data-api:
+    profiles: ["local-data"]
+    image: postgrest/postgrest:v14.5
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${SLA_DATA_DB_PASSWORD:?Set SLA_DATA_DB_PASSWORD in .env}@database:5432/sla_guard
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${SLA_DATA_JWT_SECRET:?Set SLA_DATA_JWT_SECRET in .env}
+
+  sla-guard-gateway:
+    image: nginx:1.28-alpine
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.2
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    depends_on:
+      - sla-guard-gateway
+    command: ["tunnel", "--no-autoupdate", "--protocol", "http2", "--url", "http://sla-guard-gateway:8080"]
+
+volumes:
+  database_data:
